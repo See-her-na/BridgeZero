@@ -66,6 +66,11 @@
     ;; Only contract owner can register tokens
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
     
+    ;; Validate input data
+    (asserts! (> (len name) u0) ERR-INVALID-INPUT)
+    (asserts! (> (len symbol) u0) ERR-INVALID-INPUT)
+    (asserts! (<= decimals u18) ERR-INVALID-INPUT)
+    
     ;; Store token information
     (map-set TokenInfo 
       token-id
@@ -136,14 +141,11 @@
   (let 
     (
       (sender tx-sender)
-      (token-info (map-get? TokenInfo token-id))
+      (token-info (unwrap! (map-get? TokenInfo token-id) ERR-TRANSFER-FAILED))
     )
     
     ;; Validate signature and nonce
     (try! (verify-signature sender token-id amount recipient nonce signature))
-    
-    ;; Ensure token exists
-    (asserts! (is-some token-info) ERR-TRANSFER-FAILED)
     
     ;; Check sender's token balance
     (asserts! 
@@ -221,6 +223,7 @@
 (define-public (update-relay-fee (new-fee uint))
   (begin
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+    (asserts! (>= new-fee u0) ERR-INVALID-INPUT)
     (var-set relay-fee new-fee)
     (ok true)
   )
@@ -237,3 +240,7 @@
     )
   )
 )
+
+;; New constant for input validation errors
+(define-constant ERR-INVALID-INPUT (err u7))
+
