@@ -29,13 +29,12 @@
 
 ;; Token information storage
 (define-map TokenInfo
+  uint  ;; token-id
   {
-    token-id: uint,
     name: (string-ascii 32),
     symbol: (string-ascii 10),
     decimals: uint
   }
-  bool
 )
 
 ;; Relay fee configuration
@@ -48,7 +47,12 @@
 
 ;; Helper function to convert uint to buffer
 (define-private (uint-to-buffer (n uint))
-  (unwrap-panic (to-consensus-buff? (list n)))
+  (let 
+    (
+      (buff-32 (to-consensus-buff? (list n)))
+    )
+    (unwrap-panic buff-32)
+  )
 )
 
 ;; Register a new token for bridging
@@ -59,16 +63,19 @@
   (decimals uint)
 )
   (begin
+    ;; Only contract owner can register tokens
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
-    (ok (map-set TokenInfo 
+    
+    ;; Store token information
+    (map-set TokenInfo 
+      token-id
       {
-        token-id: token-id,
         name: name,
         symbol: symbol,
         decimals: decimals
       }
-      true
-    ))
+    )
+    (ok true)
   )
 )
 
@@ -83,6 +90,7 @@
 )
   (let 
     (
+      ;; Construct message hash
       (message (concat 
         (concat 
           (concat 
@@ -96,8 +104,12 @@
         )
         (uint-to-buffer nonce)
       ))
+      
+      ;; Hash the message
       (message-hash (sha256 message))
     )
+    
+    ;; Check if nonce has been used before
     (asserts! (map-insert UsedNonces 
       {
         sender: sender,
@@ -106,7 +118,9 @@
       true
     ) 
     ERR-NONCE-USED)
-    ;; Placeholder for signature verification
+    
+    ;; Verify signature (placeholder - actual implementation would use secp256k1 signature verification)
+    ;; This is a simplified example and would need a more robust signature verification mechanism
     (ok true)
   )
 )
@@ -122,38 +136,84 @@
   (let 
     (
       (sender tx-sender)
+      (token-info (map-get? TokenInfo token-id))
     )
-    (asserts! (is-ok (verify-signature sender token-id amount recipient nonce signature)) ERR-INVALID-SIGNATURE)
-    (asserts! (is-some (map-get? TokenInfo { token-id: token-id, name: "", symbol: "", decimals: u0 })) ERR-TRANSFER-FAILED)
-    (asserts! (>= (default-to u0 (map-get? BridgeTokens { token-id: token-id, owner: sender })) amount) ERR-INSUFFICIENT-BALANCE)
     
-    (try! (transfer-tokens token-id amount sender recipient))
+    ;; Validate signature and nonce
+    (try! (verify-signature sender token-id amount recipient nonce signature))
+    
+    ;; Ensure token exists
+    (asserts! (is-some token-info) ERR-TRANSFER-FAILED)
+    
+    ;; Check sender's token balance
+    (asserts! 
+      (>= 
+        (default-to u0 
+          (map-get? BridgeTokens 
+            {
+              token-id: token-id,
+              owner: sender
+            }
+          )
+        )
+        amount
+      )
+      ERR-INSUFFICIENT-BALANCE
+    )
+    
+    ;; Deduct tokens from sender
+    (map-set BridgeTokens 
+      {
+        token-id: token-id,
+        owner: sender
+      }
+      (- 
+        (default-to u0 
+          (map-get? BridgeTokens 
+            {
+              token-id: token-id,
+              owner: sender
+            }
+          )
+        )
+        amount
+      )
+    )
+    
+    ;; Add tokens to recipient
+    (map-set BridgeTokens 
+      {
+        token-id: token-id,
+        owner: recipient
+      }
+      (+
+        (default-to u0 
+          (map-get? BridgeTokens 
+            {
+              token-id: token-id,
+              owner: recipient
+            }
+          )
+        )
+        amount
+      )
+    )
+    
+    ;; Pay relay fee
     (try! (pay-relay-fee sender))
-    
-    (ok true)
-  )
-)
-
-;; Transfer tokens between accounts
-(define-private (transfer-tokens (token-id uint) (amount uint) (sender principal) (recipient principal))
-  (begin
-    (map-set BridgeTokens 
-      { token-id: token-id, owner: sender }
-      (- (default-to u0 (map-get? BridgeTokens { token-id: token-id, owner: sender })) amount)
-    )
-    (map-set BridgeTokens 
-      { token-id: token-id, owner: recipient }
-      (+ (default-to u0 (map-get? BridgeTokens { token-id: token-id, owner: recipient })) amount)
-    )
     (ok true)
   )
 )
 
 ;; Pay relay fee to cover transaction costs
 (define-private (pay-relay-fee (sender principal))
-  (if (is-eq sender CONTRACT-OWNER)
-    (ok true)
-    (err ERR-RELAY-FEE-FAILED)
+  (begin
+    ;; In a real implementation, this would transfer tokens or STX to cover relay costs
+    ;; For now, we'll simulate a successful fee payment for the contract owner
+    (if (is-eq sender CONTRACT-OWNER)
+      (ok true)
+      ERR-RELAY-FEE-FAILED
+    )
   )
 )
 
@@ -161,19 +221,19 @@
 (define-public (update-relay-fee (new-fee uint))
   (begin
     (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
-    (ok (var-set relay-fee new-fee))
+    (var-set relay-fee new-fee)
+    (ok true)
   )
 )
 
 ;; Get token balance for a specific owner and token
 (define-read-only (get-token-balance (token-id uint) (owner principal))
-  (ok (default-to u0 
+  (default-to u0 
     (map-get? BridgeTokens 
       {
         token-id: token-id,
         owner: owner
       }
     )
-  ))
+  )
 )
-
